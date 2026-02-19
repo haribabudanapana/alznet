@@ -1,0 +1,92 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Run Playwright Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers and dependencies
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        id: playwright_run
+        run: npx playwright test --workers=1 --reporter=line,json --output=test-results/results.json
+        continue-on-error: true
+
+      - name: Generate Test Summary
+        run: |
+          # Overall Summary Table
+          echo "### Playwright Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Passed | $(jq '.stats.passed' test-results/results.json) |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | $(jq '.stats.failed' test-results/results.json) |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏩ Skipped | $(jq '.stats.skipped' test-results/results.json) |" >> $GITHUB_STEP_SUMMARY
+          TOTAL_DURATION=$(jq '.stats.duration' test-results/results.json)
+          echo "| ⏱️ Duration | $(($TOTAL_DURATION / 1000))s |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Collapsible section for Failed Tests
+          FAILED_TESTS=$(jq -r '[.suites[].specs[] | select(.ok | not) | "- " + .title] | .[]' test-results/results.json)
+          if [[ -n "$FAILED_TESTS" ]]; then
+            echo "<details><summary>❌ Failed Tests</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "$FAILED_TESTS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Collapsible section for Skipped Tests
+          SKIPPED_TESTS=$(jq -r '[.suites[].specs[] | select(.status == "skipped") | "- " + .title] | .[]' test-results/results.json)
+          if [[ -n "$SKIPPED_TESTS" ]]; then
+            echo "<details><summary>⏩ Skipped Tests</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "$SKIPPED_TESTS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Collapsible section for Passed Tests
+          PASSED_TESTS=$(jq -r '[.suites[].specs[] | select(.ok) | "- " + .title] | .[]' test-results/results.json)
+          if [[ -n "$PASSED_TESTS" ]]; then
+            echo "<details><summary>✅ Passed Tests</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "$PASSED_TESTS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check test outcome
+        if: steps.playwright_run.outcome == 'failure'
+        run: |
+          echo "Playwright tests failed."
+          exit 1
+          
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always() # This ensures the report is uploaded even if the test step fails
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
